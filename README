@@ -1,0 +1,83 @@
+
+# Overview
+
+- At first it became clear that the datasets were not designed to be joined directly. They use different schemas, contain duplicated records, have missing or inconsistent geographic attributes, and represent company names in many different formats. In this case, a simple merge using existing IDs or raw company names would either produce no matches or a large number of incorrect ones.
+
+- The solution implementation: schema alignment, data cleaning, normalization, deterministic matching using business keys, aggregation, and metric calculation.
+
+# Data Challenges
+
+During exploration, several issues were identified.
+
+- First, there is no reliable shared unique identifier between the datasets. An attempt to use internal numeric fields (such as custnmbr) resulted in zero matches, which showed that these fields are system-specific and cannot be used for cross-dataset joins.
+
+- Second, company names are highly inconsistent. The same company can appear with different casing, punctuation, legal suffixes (Inc, Ltd, Corp, etc.), or extra formatting noise. At the same time, some companies are defined as numbered corporations (for example, “1234567 Ontario Inc”), and removing numbers from such names would incorrectly merge many distinct legal entities into one. #
+
+- Third, geographic data is messy. States and provinces appear both as full names and as abbreviations, sometimes in different languages or spellings. Country fields are often missing and have to be inferred either from postal codes or from state/province values. Without normalization, the same physical location can appear under multiple different string representations.
+
+- Finally, there is a strong one-to-many pattern: one company in Dataset 1 can correspond to many records in Dataset 2 (for example, multiple branches or offices). A naive row-level merge would duplicate rows from Dataset 1, inflate overlap counts, and distort metrics.
+
+#  Decisions Applied
+
+- Instead of relying on technical IDs, the project uses a deterministic business key derived from company names. A normalization function is applied before matching to standardize names by removing punctuation, legal suffixes, and formatting noise, while explicitly preserving leading numeric identifiers for numbered corporations. This ensures that distinct legal entities are not accidentally collapsed into one. 
+
+- All geographic fields are normalized before any comparison. States and provinces are converted to standard two-letter codes for both Canada and the United States. Country values are filled using a combination of postal code pattern detection and state-based inference when the original value is missing.
+
+- A canonical location key is then built in the form: city | state | country
+
+- This representation is lowercased, stripped, and only created when meaningful data exists. It allows reliable comparison of locations across datasets.
+
+- Instead of comparing rows directly, locations are aggregated at the company level. For each company, a unique list of locations is built from Dataset 1 and from Dataset 2. Overlap is then computed as a set intersection between these two lists. This approach avoids duplication issues caused by one-to-many relationships and makes overlap metrics stable and interpretable.
+
+- Dataset 1 is treated as the authoritative base. All unique companies from Dataset 1 are preserved, and Dataset 2 is left-joined onto this base. This guarantees that no companies from Dataset 1 are lost, even if they have no match in Dataset 2.
+
+# Matching Logic
+
+The pipeline follows these steps:
+
+- Load both datasets and align column names
+- Remove obvious duplicates from Dataset 2
+- Clean and normalize company names into custname_clean
+- Normalize state/province fields and fill missing country values
+- Build canonical location strings (city | state | country)
+- Aggregate locations per company for each dataset
+- Use unique companies from Dataset 1 as the base
+- Left-join Dataset 2 on the cleaned company name (supporting one-to-many matches)
+- Compute overlapping locations as intersections of location lists
+- Calculate company-level metrics
+- Export the final, analysis-ready dataset to Excel
+
+# Metrics
+
+- The following metrics are computed at the company level (not at the row level, to avoid distortions from one-to-many relationships):
+- Total unique companies in Dataset 1
+- Companies matched in Dataset 2 and match rate
+- Unmatched companies and unmatched rate
+- One-to-many matches (companies with more than one record in Dataset 2)
+- Companies with at least one overlapping location and overlap rate
+
+In the final run of the pipeline, the results were:
+
+- 938 unique companies in Dataset 1
+- 425 companies matched in Dataset 2 (45.3%)
+- 513 companies unmatched (54.7%)
+- 74 one-to-many relationships (17.4% of matched companies)
+- 387 companies with geographic overlap (91.1% of matched companies)
+
+These numbers show that while overall name-level alignment is moderate, geographic consistency among matched companies is high.
+
+# Output:
+
+The final output file (output_file.xlsx) contains one row per company from Dataset 1, expanded to one-to-many where Dataset 2 has multiple matches. For each company, it includes:
+
+- The cleaned company key
+- The list of locations from Dataset 1
+- The list of locations from Dataset 2
+- The overlapping locations between the two
+- The overlap count
+- The raw matched records from Dataset 2 (name and address fields)
+
+This structure makes it easy to audit matches, inspect branch-level details, and validate overlap logic.
+
+
+
