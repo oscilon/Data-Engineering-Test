@@ -22,8 +22,6 @@ df_1 = df_1.rename(columns={
     "sCountry": "country",
     "sPostalZip": "zip"
 })
-df_1["address3"] = ""
-df_1["ccode"] = ""
 
 print(f"Dataset 1 columns list: {list(df_1.columns)}")
 print()
